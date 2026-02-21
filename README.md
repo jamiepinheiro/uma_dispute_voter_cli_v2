@@ -64,14 +64,56 @@ Pass `--json` / `-j` for structured output (useful for piping to other tools or 
 $ bun src/index.ts list --json | jq '.votes[0] | {description, phase: .options[].label}'
 ```
 
+### `commit`
+
+Commit votes during the Commit phase. Takes a JSON file of vote selections and writes a commit data file that must be kept for the reveal step.
+
+**Step 1 — create your votes file** (use `list` to see indices and valid option labels):
+
+```json
+[
+  { "index": 1, "vote": "Yes" },
+  { "index": 3, "vote": "No" },
+  { "index": 5, "vote": "Ambiguous / Too early to tell" }
+]
+```
+
+**Step 2 — commit:**
+
+```sh
+# Private key via flag
+bun src/index.ts commit --votes my-votes.json --out commit-data.json --private-key 0x…
+
+# Or via environment variable (recommended)
+export UMA_PRIVATE_KEY=0x…
+bun src/index.ts commit --votes my-votes.json --out commit-data.json
+```
+
+Output (`commit-data.json`) contains the round ID, voter address, transaction hash, and per-vote salts — **keep this file safe**, you need it to reveal.
+
+### `reveal`
+
+Reveal votes during the Reveal phase using the file produced by `commit`.
+
+```sh
+bun src/index.ts reveal --in commit-data.json --private-key 0x…
+```
+
+The command validates that:
+- The current phase is Reveal (not Commit)
+- The round ID in the file matches the current round
+- The private key matches the voter address in the file
+
 ### Options
 
-All commands accept:
-
-| Flag | Description | Default |
-|------|-------------|---------|
-| `-r, --rpc-url <url>` | Ethereum RPC URL | `https://eth.llamarpc.com` |
-| `-j, --json` | Machine-readable JSON output | `false` |
+| Flag | Default | Commands |
+|------|---------|----------|
+| `-r, --rpc-url <url>` | `https://eth.llamarpc.com` | all |
+| `-j, --json` | `false` | `stage`, `list` |
+| `--private-key <hex>` | `$UMA_PRIVATE_KEY` | `commit`, `reveal` |
+| `--votes <file>` | — | `commit` |
+| `--out <file>` | — | `commit` |
+| `--in <file>` | — | `reveal` |
 
 ## How it works
 
@@ -89,13 +131,25 @@ The CLI fetches LLM-generated summaries of Discord community comments from `vote
 
 > **Note:** Discord summaries may not be available for all votes and should be verified independently before voting.
 
+## How commit/reveal works
+
+UMA uses a commit-reveal scheme to prevent voters from copying each other's answers:
+
+1. **Commit phase** — submit `keccak256(price || salt || voter || time || ancillaryData || roundId || identifier)`. The hash hides your vote.
+2. **Reveal phase** — submit the original `price` and `salt`. The contract verifies the hash matches and tallies the vote.
+
+The CLI generates a cryptographically random salt per vote and stores everything needed for reveal in the commit file. Never reuse a salt and keep the commit file confidential until the reveal phase ends.
+
 ## Development
 
 ```sh
-# Run unit tests (fast, no network)
+# Unit tests — commit/reveal logic (no network)
+bun test tests/commit.test.ts
+
+# Unit tests — parsing and formatting (no network)
 bun test tests/list.test.ts
 
-# Run integration tests (live Polygon RPC calls)
+# Integration tests — live Polygon RPC calls
 bun test tests/crosschain.test.ts
 
 # Run all tests

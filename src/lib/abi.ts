@@ -39,6 +39,44 @@ export const VOTING_V2_ABI = [
     inputs: [{ name: "roundId", type: "uint256" }],
     outputs: [{ type: "uint256" }],
   },
+  {
+    name: "batchCommit",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      {
+        name: "commits",
+        type: "tuple[]",
+        components: [
+          { name: "identifier", type: "bytes32" },
+          { name: "time", type: "uint256" },
+          { name: "ancillaryData", type: "bytes" },
+          { name: "hash", type: "bytes32" },
+          { name: "encryptedVote", type: "bytes" },
+        ],
+      },
+    ],
+    outputs: [],
+  },
+  {
+    name: "batchReveal",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      {
+        name: "reveals",
+        type: "tuple[]",
+        components: [
+          { name: "identifier", type: "bytes32" },
+          { name: "time", type: "uint256" },
+          { name: "price", type: "int256" },
+          { name: "ancillaryData", type: "bytes" },
+          { name: "salt", type: "int256" },
+        ],
+      },
+    ],
+    outputs: [],
+  },
 ] as const;
 
 // Ethereum mainnet VotingV2 contract

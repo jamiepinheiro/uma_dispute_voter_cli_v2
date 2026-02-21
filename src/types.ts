@@ -27,14 +27,41 @@ export interface DiscordSummaryData {
 export interface ParsedVote {
   index: number;
   identifier: string;
+  rawIdentifier: `0x${string}`;
   time: Date;
   isGovernance: boolean;
   rollCount: number;
   roundId: number;
   description: string;
   ancillaryRaw: string;
+  rawAncillaryData: `0x${string}`;
   options: VoteOption[];
   discordSummary?: DiscordSummaryData | null;
+}
+
+// Input file format for the commit command
+export interface VoteInput {
+  index: number;
+  vote: string; // must match a VoteOption label exactly
+}
+
+// Per-vote record stored in the commit output file; everything as strings for JSON safety
+export interface CommitRecord {
+  description: string;
+  identifier: string;     // bytes32 hex (0x…)
+  time: string;           // unix timestamp as decimal string
+  ancillaryData: string;  // raw hex bytes (0x…)
+  price: string;          // bigint decimal string
+  salt: string;           // bigint decimal string (may be negative)
+  optionLabel: string;    // human label e.g. "Yes"
+}
+
+export interface CommitFile {
+  roundId: number;
+  voterAddress: string;
+  committedAt: string;  // ISO timestamp
+  txHash?: string;
+  commits: CommitRecord[];
 }
 
 export interface RoundInfo {

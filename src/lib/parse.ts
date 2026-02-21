@@ -214,12 +214,14 @@ export async function parseVote(
   return {
     index,
     identifier,
+    rawIdentifier: raw.identifier,
     time: new Date(Number(raw.time) * 1000),
     isGovernance: raw.isGovernance,
     rollCount: raw.rollCount,
     roundId: raw.lastVotingRound,
     description,
     ancillaryRaw,
+    rawAncillaryData: raw.ancillaryData,
     options,
   };
 }
