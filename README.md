@@ -104,6 +104,10 @@ The command validates that:
 - The round ID in the file matches the current round
 - The private key matches the voter address in the file
 
+### Gas costs
+
+Both `commit` and `reveal` send a single batch transaction to the VotingV2 contract. Gas used scales with the number of votes in the batch — roughly 80–120k gas per transaction for a typical batch of votes. At normal network conditions this costs well under $1. Gas is estimated automatically by the RPC node; no manual gas limit is required.
+
 ### Options
 
 | Flag | Default | Commands |
