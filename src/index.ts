@@ -60,6 +60,7 @@ program
   .requiredOption("--out <file>", "File to write commit data (needed for reveal)")
   .option("-r, --rpc-url <url>", "Ethereum RPC URL", DEFAULT_RPC_URLS.mainnet)
   .option("--private-key <hex>", "Voter private key (or set UMA_PRIVATE_KEY env var)")
+  .option("--dry-run", "Estimate gas without sending the transaction", false)
   .action(async (opts) => {
     const privateKey = (opts.privateKey ?? process.env.UMA_PRIVATE_KEY ?? "") as string;
     if (!privateKey.startsWith("0x") || privateKey.length !== 66) {
@@ -72,6 +73,7 @@ program
       outFile: opts.out,
       privateKey: privateKey as `0x${string}`,
       rpcUrl: opts.rpcUrl,
+      dryRun: opts.dryRun,
     });
   });
 
@@ -81,6 +83,7 @@ program
   .requiredOption("--in <file>", "Commit file produced by the commit command")
   .option("-r, --rpc-url <url>", "Ethereum RPC URL", DEFAULT_RPC_URLS.mainnet)
   .option("--private-key <hex>", "Voter private key (or set UMA_PRIVATE_KEY env var)")
+  .option("--dry-run", "Estimate gas without sending the transaction", false)
   .action(async (opts) => {
     const privateKey = (opts.privateKey ?? process.env.UMA_PRIVATE_KEY ?? "") as string;
     if (!privateKey.startsWith("0x") || privateKey.length !== 66) {
@@ -92,6 +95,7 @@ program
       inFile: opts.in,
       privateKey: privateKey as `0x${string}`,
       rpcUrl: opts.rpcUrl,
+      dryRun: opts.dryRun,
     });
   });
 

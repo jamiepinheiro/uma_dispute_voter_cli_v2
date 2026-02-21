@@ -10,10 +10,11 @@ export interface RevealOptions {
   inFile: string;
   privateKey: `0x${string}`;
   rpcUrl: string;
+  dryRun: boolean;
 }
 
 export async function revealCommand(options: RevealOptions): Promise<void> {
-  const { inFile, privateKey, rpcUrl } = options;
+  const { inFile, privateKey, rpcUrl, dryRun } = options;
 
   // Read commit file
   let commitFile;
@@ -74,6 +75,36 @@ export async function revealCommand(options: RevealOptions): Promise<void> {
       `  ${chalk.bold(c.description.slice(0, 55))}${c.description.length > 55 ? "…" : ""}\n` +
       `       Vote: ${chalk.green.bold(c.optionLabel)}\n\n`
     );
+  }
+
+  if (dryRun) {
+    process.stdout.write(chalk.dim("  Estimating gas (dry run — no transaction sent)…\n"));
+    try {
+      const [gasEstimate, gasPrice] = await Promise.all([
+        publicClient.estimateContractGas({
+          address: VOTING_V2_ADDRESS,
+          abi: VOTING_V2_ABI,
+          functionName: "batchReveal",
+          args: [reveals],
+          account: voterAddress,
+        }),
+        publicClient.getGasPrice(),
+      ]);
+      const costWei = gasEstimate * gasPrice;
+      const costEth = Number(costWei) / 1e18;
+      const gasPriceGwei = Number(gasPrice) / 1e9;
+      process.stdout.write(
+        `\n  ${chalk.bold("Gas estimate (batchReveal)")}\n` +
+        `  Gas units:  ${chalk.bold(gasEstimate.toLocaleString())}\n` +
+        `  Gas price:  ${chalk.bold(gasPriceGwei.toFixed(2))} gwei\n` +
+        `  Est. cost:  ${chalk.bold(costEth.toFixed(6))} ETH\n\n`
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(chalk.red(`  Gas estimation failed: ${msg}\n`));
+      process.exit(1);
+    }
+    return;
   }
 
   // Send batchReveal transaction

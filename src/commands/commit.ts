@@ -14,10 +14,11 @@ export interface CommitOptions {
   outFile: string;
   privateKey: `0x${string}`;
   rpcUrl: string;
+  dryRun: boolean;
 }
 
 export async function commitCommand(options: CommitOptions): Promise<void> {
-  const { votesFile, outFile, privateKey, rpcUrl } = options;
+  const { votesFile, outFile, privateKey, rpcUrl, dryRun } = options;
 
   // Parse votes input file
   let voteInputs: VoteInput[];
@@ -119,6 +120,36 @@ export async function commitCommand(options: CommitOptions): Promise<void> {
       hash,
       encryptedVote: "0x",
     });
+  }
+
+  if (dryRun) {
+    process.stdout.write(chalk.dim("  Estimating gas (dry run — no transaction sent)…\n"));
+    try {
+      const [gasEstimate, gasPrice] = await Promise.all([
+        publicClient.estimateContractGas({
+          address: VOTING_V2_ADDRESS,
+          abi: VOTING_V2_ABI,
+          functionName: "batchCommit",
+          args: [contractCommits],
+          account: voterAddress,
+        }),
+        publicClient.getGasPrice(),
+      ]);
+      const costWei = gasEstimate * gasPrice;
+      const costEth = Number(costWei) / 1e18;
+      const gasPriceGwei = Number(gasPrice) / 1e9;
+      process.stdout.write(
+        `\n  ${chalk.bold("Gas estimate (batchCommit)")}\n` +
+        `  Gas units:  ${chalk.bold(gasEstimate.toLocaleString())}\n` +
+        `  Gas price:  ${chalk.bold(gasPriceGwei.toFixed(2))} gwei\n` +
+        `  Est. cost:  ${chalk.bold(costEth.toFixed(6))} ETH\n\n`
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(chalk.red(`  Gas estimation failed: ${msg}\n`));
+      process.exit(1);
+    }
+    return;
   }
 
   // Send batchCommit transaction
