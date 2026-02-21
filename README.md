@@ -108,6 +108,17 @@ The command validates that:
 
 Both `commit` and `reveal` send a single batch transaction to the VotingV2 contract. Gas used scales with the number of votes in the batch — roughly 80–120k gas per transaction for a typical batch of votes. At normal network conditions this costs well under $1. Gas is estimated automatically by the RPC node; no manual gas limit is required.
 
+Use `--dry-run` to estimate gas without sending a transaction:
+
+```
+$ bun src/index.ts commit --votes my-votes.json --out commit-data.json --dry-run
+
+  Gas estimate (batchCommit)
+  Gas units:  95,432
+  Gas price:  2.50 gwei
+  Est. cost:  0.000239 ETH
+```
+
 ### Options
 
 | Flag | Default | Commands |
@@ -118,6 +129,7 @@ Both `commit` and `reveal` send a single batch transaction to the VotingV2 contr
 | `--votes <file>` | — | `commit` |
 | `--out <file>` | — | `commit` |
 | `--in <file>` | — | `reveal` |
+| `--dry-run` | `false` | `commit`, `reveal` |
 
 ## How it works
 
