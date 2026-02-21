@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { Command } from "commander";
 import { listCommand } from "./commands/list.js";
+import { stageCommand } from "./commands/stage.js";
 
 const DEFAULT_RPC_URLS: Record<string, string> = {
   mainnet: "https://eth.llamarpc.com",
@@ -39,6 +40,15 @@ program
     }
 
     await listCommand({ rpcUrl, json: opts.json });
+  });
+
+program
+  .command("stage")
+  .description("Show the current voting phase (Commit or Reveal) for the active round")
+  .option("-r, --rpc-url <url>", "Ethereum RPC URL", DEFAULT_RPC_URLS.mainnet)
+  .option("-j, --json", "Output machine-readable JSON", false)
+  .action(async (opts) => {
+    await stageCommand({ rpcUrl: opts.rpcUrl, json: opts.json });
   });
 
 program.parse(process.argv);
