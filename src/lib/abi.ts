@@ -47,6 +47,21 @@ export const VOTING_V2_ABI = [
     outputs: [{ type: "address" }],
   },
   {
+    // Public mapping getter: voterStakes(address) → VoterStake struct
+    name: "voterStakes",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "voter", type: "address" }],
+    outputs: [
+      { name: "stake", type: "uint256" },
+      { name: "pendingUnstake", type: "uint256" },
+      { name: "delegate", type: "address" },
+      { name: "requestUnstakeTime", type: "uint64" },
+      { name: "umaPerTokenStored", type: "uint128" },
+      { name: "cumulativeStaked", type: "uint128" },
+    ],
+  },
+  {
     name: "batchCommit",
     type: "function",
     stateMutability: "nonpayable",

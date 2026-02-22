@@ -57,6 +57,33 @@ export async function commitCommand(options: CommitOptions): Promise<void> {
     process.stdout.write(chalk.dim(`  Voting as delegate for: ${voterAddress}\n\n`));
   }
 
+  // Pre-flight: read voterStakes to catch silent reverts before simulating
+  try {
+    const stakeInfo = await publicClient.readContract({
+      address: VOTING_V2_ADDRESS,
+      abi: VOTING_V2_ABI,
+      functionName: "voterStakes",
+      args: [voterAddress],
+    });
+    process.stdout.write(chalk.dim(
+      `  Stake:   ${stakeInfo.stake} (${stakeInfo.stake === 0n ? chalk.red("NO STAKE") : "active"})\n` +
+      (stakeInfo.pendingUnstake > 0n ? chalk.yellow(`  Warning: ${stakeInfo.pendingUnstake} pending unstake\n`) : "") +
+      (isDelegate && stakeInfo.delegate.toLowerCase() !== signerAddress.toLowerCase()
+        ? chalk.red(`  Warning: staker's registered delegate (${stakeInfo.delegate}) ≠ signer (${signerAddress})\n`)
+        : "")
+    ));
+    if (stakeInfo.stake === 0n) {
+      process.stderr.write(chalk.red(
+        `\n  Error: ${voterAddress} has no active stake in VotingV2.\n` +
+        `  The staker must call stake() on the VotingV2 contract before votes can be committed.\n`
+      ));
+      process.exit(1);
+    }
+  } catch (err) {
+    // voterStakes ABI may not match exactly — skip check and let simulation catch it
+    if (debug) process.stderr.write(chalk.dim(`  (voterStakes preflight failed: ${err instanceof Error ? err.message : err})\n`));
+  }
+
   if (phaseRaw !== 0) {
     process.stderr.write(chalk.red(`  Error: Current phase is Reveal, not Commit. Cannot commit votes now.\n`));
     process.exit(1);
