@@ -5,6 +5,7 @@ import chalk from "chalk";
 import { VOTING_V2_ABI, VOTING_V2_ADDRESS } from "../lib/abi.js";
 import { createClient } from "../lib/voting.js";
 import { readCommitFile } from "../lib/commit.js";
+import { extractRevertReason } from "../lib/errors.js";
 
 export interface RevealOptions {
   inFile: string;
@@ -113,8 +114,7 @@ export async function revealCommand(options: RevealOptions): Promise<void> {
         `  Est. cost:  ${chalk.bold(costEth.toFixed(6))} ETH\n\n`
       );
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      process.stderr.write(chalk.red(`  Gas estimation failed: ${msg}\n`));
+      process.stderr.write(chalk.red(`  Gas estimation failed: ${extractRevertReason(err)}\n`));
       process.exit(1);
     }
     return;
@@ -127,8 +127,7 @@ export async function revealCommand(options: RevealOptions): Promise<void> {
     const { request } = await publicClient.simulateContract(contractCall);
     simulatedRequest = request;
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    process.stderr.write(chalk.red(`  Simulation failed (transaction would revert): ${msg}\n`));
+    process.stderr.write(chalk.red(`  Simulation failed (transaction would revert):\n  ${extractRevertReason(err)}\n`));
     process.exit(1);
   }
 

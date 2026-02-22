@@ -7,6 +7,7 @@ import { VOTING_V2_ABI, VOTING_V2_ADDRESS } from "../lib/abi.js";
 import { fetchVotingData } from "../lib/voting.js";
 import { createClient } from "../lib/voting.js";
 import { generateSalt, computeCommitHash, writeCommitFile } from "../lib/commit.js";
+import { extractRevertReason } from "../lib/errors.js";
 import type { VoteInput, CommitRecord, CommitFile } from "../types.js";
 
 export interface CommitOptions {
@@ -156,8 +157,7 @@ export async function commitCommand(options: CommitOptions): Promise<void> {
         `  Est. cost:  ${chalk.bold(costEth.toFixed(6))} ETH\n\n`
       );
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      process.stderr.write(chalk.red(`  Gas estimation failed: ${msg}\n`));
+      process.stderr.write(chalk.red(`  Gas estimation failed: ${extractRevertReason(err)}\n`));
       process.exit(1);
     }
     return;
@@ -170,8 +170,12 @@ export async function commitCommand(options: CommitOptions): Promise<void> {
     const { request } = await publicClient.simulateContract(contractCall);
     simulatedRequest = request;
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    process.stderr.write(chalk.red(`  Simulation failed (transaction would revert): ${msg}\n`));
+    const reason = extractRevertReason(err);
+    process.stderr.write(chalk.red(`  Simulation failed (transaction would revert):\n  ${reason}\n`));
+    // If no reason was decoded, log the raw error object for debugging
+    if (!reason.includes("Reason:") && !reason.includes("Error:") && !reason.includes("Raw revert")) {
+      process.stderr.write(chalk.dim(`  Full error: ${JSON.stringify(err, Object.getOwnPropertyNames(err as object), 2)}\n`));
+    }
     process.exit(1);
   }
 
