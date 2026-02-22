@@ -88,17 +88,19 @@ export async function revealCommand(options: RevealOptions): Promise<void> {
     );
   }
 
+  const contractCall = {
+    address: VOTING_V2_ADDRESS,
+    abi: VOTING_V2_ABI,
+    functionName: "batchReveal",
+    args: [reveals],
+    account: signerAddress, // msg.sender is the signer (delegate or staker)
+  } as const;
+
   if (dryRun) {
     process.stdout.write(chalk.dim("  Estimating gas (dry run — no transaction sent)…\n"));
     try {
       const [gasEstimate, gasPrice] = await Promise.all([
-        publicClient.estimateContractGas({
-          address: VOTING_V2_ADDRESS,
-          abi: VOTING_V2_ABI,
-          functionName: "batchReveal",
-          args: [reveals],
-          account: voterAddress,
-        }),
+        publicClient.estimateContractGas(contractCall),
         publicClient.getGasPrice(),
       ]);
       const costWei = gasEstimate * gasPrice;
@@ -118,6 +120,18 @@ export async function revealCommand(options: RevealOptions): Promise<void> {
     return;
   }
 
+  // Simulate first to surface revert reasons before broadcasting
+  process.stdout.write(chalk.dim("  Simulating batchReveal…\n"));
+  let simulatedRequest: Awaited<ReturnType<typeof publicClient.simulateContract>>["request"];
+  try {
+    const { request } = await publicClient.simulateContract(contractCall);
+    simulatedRequest = request;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    process.stderr.write(chalk.red(`  Simulation failed (transaction would revert): ${msg}\n`));
+    process.exit(1);
+  }
+
   // Send batchReveal transaction
   const walletClient = createWalletClient({
     account,
@@ -129,12 +143,7 @@ export async function revealCommand(options: RevealOptions): Promise<void> {
 
   let txHash: `0x${string}`;
   try {
-    txHash = await walletClient.writeContract({
-      address: VOTING_V2_ADDRESS,
-      abi: VOTING_V2_ABI,
-      functionName: "batchReveal",
-      args: [reveals],
-    });
+    txHash = await walletClient.writeContract(simulatedRequest);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     process.stderr.write(chalk.red(`  Transaction failed: ${msg}\n`));
