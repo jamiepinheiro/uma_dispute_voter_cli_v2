@@ -10,38 +10,73 @@ export function extractRevertReason(err: unknown): string {
   if (!err || typeof err !== "object") return String(err);
 
   const parts: string[] = [];
+  const seen = new WeakSet();
 
   const walk = (e: unknown, depth = 0) => {
-    if (!e || typeof e !== "object" || depth > 6) return;
+    if (!e || typeof e !== "object" || depth > 8) return;
+    if (seen.has(e as object)) return;
+    seen.add(e as object);
 
-    // viem's BaseError.shortMessage is the most concise description
-    if ("shortMessage" in e && e.shortMessage) {
-      parts.push(String(e.shortMessage));
-    } else if ("message" in e && typeof e.message === "string" && depth === 0) {
-      parts.push(e.message);
+    const o = e as Record<string, unknown>;
+
+    // viem BaseError.shortMessage is the most concise one-liner
+    if (o.shortMessage) parts.push(String(o.shortMessage));
+    else if (typeof o.message === "string" && depth === 0) parts.push(o.message);
+
+    // viem BaseError.details often contains the raw RPC message e.g. "execution reverted: ..."
+    if (o.details && !parts.some(p => p === o.details)) parts.push(`Details: ${o.details}`);
+
+    // Decoded string reason (Error(string))
+    if (o.reason) parts.push(`Reason: ${o.reason}`);
+
+    // Decoded custom error from ABI
+    if (o.data && typeof o.data === "object") {
+      const d = o.data as Record<string, unknown>;
+      if (d.errorName) parts.push(`Error: ${d.errorName}${d.args !== undefined ? `(${JSON.stringify(d.args)})` : ""}`);
     }
 
-    // Decoded string reason (from Error(string) ABI)
-    if ("reason" in e && e.reason) {
-      parts.push(`Reason: ${e.reason}`);
+    // Raw revert bytes (unknown custom error or bare revert with data)
+    if (typeof o.data === "string" && o.data.length > 2 && o.data !== "0x") {
+      parts.push(`Raw revert data: ${o.data}`);
     }
 
-    // Decoded custom error (viem decodes these when the error is in the ABI)
-    if ("data" in e && e.data && typeof e.data === "object") {
-      const d = e.data as Record<string, unknown>;
-      if (d.errorName) parts.push(`Error: ${d.errorName}${d.args ? `(${JSON.stringify(d.args)})` : ""}`);
+    // viem BaseError.metaMessages for extra context
+    if (Array.isArray(o.metaMessages)) {
+      for (const m of o.metaMessages) {
+        const s = String(m).trim();
+        if (s && !parts.includes(s)) parts.push(s);
+      }
     }
 
-    // Raw revert bytes — always show these so unknown custom errors are visible
-    if ("data" in e && typeof e.data === "string" && e.data !== "0x" && e.data !== "") {
-      parts.push(`Raw revert data: ${e.data}`);
-    }
-
-    // Walk into cause chain
-    if ("cause" in e) walk((e as Record<string, unknown>).cause, depth + 1);
+    // Walk the cause chain
+    if (o.cause) walk(o.cause, depth + 1);
   };
 
   walk(err);
 
   return parts.length > 0 ? parts.join("\n  ") : String((err as Error).message ?? err);
+}
+
+/**
+ * Serialise an error object fully (including non-enumerable properties and
+ * the entire cause chain) for debug output.
+ */
+export function dumpError(err: unknown): string {
+  const seen = new WeakSet();
+  const replacer = (_key: string, value: unknown) => {
+    if (value && typeof value === "object") {
+      if (seen.has(value as object)) return "[Circular]";
+      seen.add(value as object);
+      // Collect both enumerable and non-enumerable own props
+      return Object.fromEntries(
+        Object.getOwnPropertyNames(value).map(k => [k, (value as Record<string, unknown>)[k]])
+      );
+    }
+    return typeof value === "bigint" ? value.toString() : value;
+  };
+  try {
+    return JSON.stringify(err, replacer, 2);
+  } catch {
+    return String(err);
+  }
 }

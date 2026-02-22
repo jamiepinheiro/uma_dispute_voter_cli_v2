@@ -7,7 +7,7 @@ import { VOTING_V2_ABI, VOTING_V2_ADDRESS } from "../lib/abi.js";
 import { fetchVotingData } from "../lib/voting.js";
 import { createClient } from "../lib/voting.js";
 import { generateSalt, computeCommitHash, writeCommitFile } from "../lib/commit.js";
-import { extractRevertReason } from "../lib/errors.js";
+import { extractRevertReason, dumpError } from "../lib/errors.js";
 import type { VoteInput, CommitRecord, CommitFile } from "../types.js";
 
 export interface CommitOptions {
@@ -16,10 +16,11 @@ export interface CommitOptions {
   privateKey: `0x${string}`;
   rpcUrl: string;
   dryRun: boolean;
+  debug: boolean;
 }
 
 export async function commitCommand(options: CommitOptions): Promise<void> {
-  const { votesFile, outFile, privateKey, rpcUrl, dryRun } = options;
+  const { votesFile, outFile, privateKey, rpcUrl, dryRun, debug } = options;
 
   // Parse votes input file
   let voteInputs: VoteInput[];
@@ -140,6 +141,25 @@ export async function commitCommand(options: CommitOptions): Promise<void> {
     account: signerAddress, // msg.sender is the signer (delegate or staker)
   } as const;
 
+  if (debug) {
+    process.stderr.write(chalk.dim(
+      `\n  === DEBUG: batchCommit params ===\n` +
+      `  Contract:    ${VOTING_V2_ADDRESS}\n` +
+      `  msg.sender:  ${signerAddress}\n` +
+      `  voterAddr:   ${voterAddress}${isDelegate ? " (staker, resolved from delegate)" : ""}\n` +
+      `  roundId:     ${roundId}\n` +
+      `  commits:\n` +
+      contractCommits.map((c, i) =>
+        `    [${i}] identifier:    ${c.identifier}\n` +
+        `         time:          ${c.time}\n` +
+        `         ancillaryData: ${c.ancillaryData}\n` +
+        `         hash:          ${c.hash}\n` +
+        `         encryptedVote: ${c.encryptedVote}\n`
+      ).join("") +
+      `  ================================\n\n`
+    ));
+  }
+
   if (dryRun) {
     process.stdout.write(chalk.dim("  Estimating gas (dry run — no transaction sent)…\n"));
     try {
@@ -172,9 +192,8 @@ export async function commitCommand(options: CommitOptions): Promise<void> {
   } catch (err) {
     const reason = extractRevertReason(err);
     process.stderr.write(chalk.red(`  Simulation failed (transaction would revert):\n  ${reason}\n`));
-    // If no reason was decoded, log the raw error object for debugging
-    if (!reason.includes("Reason:") && !reason.includes("Error:") && !reason.includes("Raw revert")) {
-      process.stderr.write(chalk.dim(`  Full error: ${JSON.stringify(err, Object.getOwnPropertyNames(err as object), 2)}\n`));
+    if (debug) {
+      process.stderr.write(chalk.dim(`\n  === DEBUG: full error ===\n${dumpError(err)}\n  =========================\n`));
     }
     process.exit(1);
   }

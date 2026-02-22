@@ -5,17 +5,18 @@ import chalk from "chalk";
 import { VOTING_V2_ABI, VOTING_V2_ADDRESS } from "../lib/abi.js";
 import { createClient } from "../lib/voting.js";
 import { readCommitFile } from "../lib/commit.js";
-import { extractRevertReason } from "../lib/errors.js";
+import { extractRevertReason, dumpError } from "../lib/errors.js";
 
 export interface RevealOptions {
   inFile: string;
   privateKey: `0x${string}`;
   rpcUrl: string;
   dryRun: boolean;
+  debug: boolean;
 }
 
 export async function revealCommand(options: RevealOptions): Promise<void> {
-  const { inFile, privateKey, rpcUrl, dryRun } = options;
+  const { inFile, privateKey, rpcUrl, dryRun, debug } = options;
 
   // Read commit file
   let commitFile;
@@ -97,6 +98,25 @@ export async function revealCommand(options: RevealOptions): Promise<void> {
     account: signerAddress, // msg.sender is the signer (delegate or staker)
   } as const;
 
+  if (debug) {
+    process.stderr.write(chalk.dim(
+      `\n  === DEBUG: batchReveal params ===\n` +
+      `  Contract:   ${VOTING_V2_ADDRESS}\n` +
+      `  msg.sender: ${signerAddress}\n` +
+      `  voterAddr:  ${resolvedVoter}${isDelegate ? " (staker, resolved from delegate)" : ""}\n` +
+      `  roundId:    ${currentRoundId}\n` +
+      `  reveals:\n` +
+      reveals.map((r, i) =>
+        `    [${i}] identifier:    ${r.identifier}\n` +
+        `         time:          ${r.time}\n` +
+        `         price:         ${r.price}\n` +
+        `         ancillaryData: ${r.ancillaryData}\n` +
+        `         salt:          ${r.salt}\n`
+      ).join("") +
+      `  =================================\n\n`
+    ));
+  }
+
   if (dryRun) {
     process.stdout.write(chalk.dim("  Estimating gas (dry run — no transaction sent)…\n"));
     try {
@@ -127,7 +147,11 @@ export async function revealCommand(options: RevealOptions): Promise<void> {
     const { request } = await publicClient.simulateContract(contractCall);
     simulatedRequest = request;
   } catch (err) {
-    process.stderr.write(chalk.red(`  Simulation failed (transaction would revert):\n  ${extractRevertReason(err)}\n`));
+    const reason = extractRevertReason(err);
+    process.stderr.write(chalk.red(`  Simulation failed (transaction would revert):\n  ${reason}\n`));
+    if (debug) {
+      process.stderr.write(chalk.dim(`\n  === DEBUG: full error ===\n${dumpError(err)}\n  =========================\n`));
+    }
     process.exit(1);
   }
 
