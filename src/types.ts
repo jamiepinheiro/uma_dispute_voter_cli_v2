@@ -58,8 +58,9 @@ export interface CommitRecord {
 
 export interface CommitFile {
   roundId: number;
-  voterAddress: string;
-  committedAt: string;  // ISO timestamp
+  voterAddress: string;   // staker address (used in hash, may differ from signer if delegating)
+  signerAddress: string;  // address derived from private key (delegate or same as voterAddress)
+  committedAt: string;    // ISO timestamp
   txHash?: string;
   commits: CommitRecord[];
 }

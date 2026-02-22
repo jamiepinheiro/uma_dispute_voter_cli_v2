@@ -33,18 +33,27 @@ export async function commitCommand(options: CommitOptions): Promise<void> {
   }
 
   const account = privateKeyToAccount(privateKey);
-  const voterAddress = account.address;
+  const signerAddress = account.address;
 
-  process.stdout.write(chalk.dim(`  Voter:   ${voterAddress}\n`));
+  process.stdout.write(chalk.dim(`  Signer:  ${signerAddress}\n`));
   process.stdout.write(chalk.dim(`  Network: ${rpcUrl}\n\n`));
 
   const publicClient = createClient(rpcUrl);
 
-  // Fetch current round and validate phase
-  const [phaseRaw, roundIdRaw] = await Promise.all([
+  // Fetch current round, phase, and resolve delegate → staker
+  const [phaseRaw, roundIdRaw, resolvedVoter] = await Promise.all([
     publicClient.readContract({ address: VOTING_V2_ADDRESS, abi: VOTING_V2_ABI, functionName: "getVotePhase" }),
     publicClient.readContract({ address: VOTING_V2_ADDRESS, abi: VOTING_V2_ABI, functionName: "getCurrentRoundId" }),
+    publicClient.readContract({ address: VOTING_V2_ADDRESS, abi: VOTING_V2_ABI, functionName: "getVoterFromDelegate", args: [signerAddress] }),
   ]);
+
+  // The effective voter address is used in the commit hash. If the signer is a delegate,
+  // getVoterFromDelegate returns the staker's address; otherwise it returns the signer's address.
+  const voterAddress = resolvedVoter as `0x${string}`;
+  const isDelegate = voterAddress.toLowerCase() !== signerAddress.toLowerCase();
+  if (isDelegate) {
+    process.stdout.write(chalk.dim(`  Voting as delegate for: ${voterAddress}\n\n`));
+  }
 
   if (phaseRaw !== 0) {
     process.stderr.write(chalk.red(`  Error: Current phase is Reveal, not Commit. Cannot commit votes now.\n`));
@@ -179,6 +188,7 @@ export async function commitCommand(options: CommitOptions): Promise<void> {
   const commitFile: CommitFile = {
     roundId,
     voterAddress,
+    signerAddress,
     committedAt: new Date().toISOString(),
     txHash,
     commits,

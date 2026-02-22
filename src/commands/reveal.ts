@@ -26,25 +26,36 @@ export async function revealCommand(options: RevealOptions): Promise<void> {
   }
 
   const account = privateKeyToAccount(privateKey);
-  const voterAddress = account.address;
+  const signerAddress = account.address;
 
-  if (voterAddress.toLowerCase() !== commitFile.voterAddress.toLowerCase()) {
-    process.stderr.write(
-      chalk.red(`  Error: Private key address (${voterAddress}) does not match commit file voter (${commitFile.voterAddress})\n`)
-    );
-    process.exit(1);
-  }
-
-  process.stdout.write(chalk.dim(`  Voter:   ${voterAddress}\n`));
+  process.stdout.write(chalk.dim(`  Signer:  ${signerAddress}\n`));
   process.stdout.write(chalk.dim(`  Network: ${rpcUrl}\n\n`));
 
   const publicClient = createClient(rpcUrl);
 
-  // Validate phase and round
-  const [phaseRaw, roundIdRaw] = await Promise.all([
+  // Validate phase, round, and resolve delegate → staker
+  const [phaseRaw, roundIdRaw, resolvedVoter] = await Promise.all([
     publicClient.readContract({ address: VOTING_V2_ADDRESS, abi: VOTING_V2_ABI, functionName: "getVotePhase" }),
     publicClient.readContract({ address: VOTING_V2_ADDRESS, abi: VOTING_V2_ABI, functionName: "getCurrentRoundId" }),
+    publicClient.readContract({ address: VOTING_V2_ADDRESS, abi: VOTING_V2_ABI, functionName: "getVoterFromDelegate", args: [signerAddress] }),
   ]);
+
+  // The effective voter (staker) must match what was used in the commit hash
+  const effectiveVoter = (resolvedVoter as string).toLowerCase();
+  if (effectiveVoter !== commitFile.voterAddress.toLowerCase()) {
+    process.stderr.write(
+      chalk.red(
+        `  Error: This key's effective voter address (${resolvedVoter}) does not match the commit file voter (${commitFile.voterAddress})\n` +
+        `  Make sure you are using the same key (or delegate) that was used to commit.\n`
+      )
+    );
+    process.exit(1);
+  }
+
+  const isDelegate = effectiveVoter !== signerAddress.toLowerCase();
+  if (isDelegate) {
+    process.stdout.write(chalk.dim(`  Revealing as delegate for: ${resolvedVoter}\n\n`));
+  }
 
   if (phaseRaw !== 1) {
     process.stderr.write(chalk.red(`  Error: Current phase is Commit, not Reveal. Cannot reveal votes yet.\n`));

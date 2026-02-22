@@ -40,6 +40,13 @@ export const VOTING_V2_ABI = [
     outputs: [{ type: "uint256" }],
   },
   {
+    name: "getVoterFromDelegate",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "caller", type: "address" }],
+    outputs: [{ type: "address" }],
+  },
+  {
     name: "batchCommit",
     type: "function",
     stateMutability: "nonpayable",

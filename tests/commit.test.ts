@@ -11,7 +11,8 @@ import type { CommitFile } from "../src/types.js";
 
 // ─── Shared fixtures ──────────────────────────────────────────────────────────
 
-const VOTER = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045" as `0x${string}`;
+const VOTER     = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045" as `0x${string}`;
+const DELEGATE  = "0x1111111111111111111111111111111111111111" as `0x${string}`;
 const IDENTIFIER = "0x5945535f4f525f4e4f5f51554552590000000000000000000000000000000000" as `0x${string}`;
 const ANCILLARY = "0x713a2077696c6c20696e766f6963650000000000" as `0x${string}`;
 const TIME = 1771449360n;
@@ -150,6 +151,38 @@ describe("computeCommitHash", () => {
   });
 });
 
+// ─── Delegate voting ──────────────────────────────────────────────────────────
+
+describe("delegate voting", () => {
+  const SALT = 99999999999999999n;
+
+  test("hash computed with staker address differs from hash with delegate address", () => {
+    const hashAsStaker   = computeCommitHash(PRICE_YES, SALT, VOTER,    TIME, ANCILLARY, ROUND_ID, IDENTIFIER);
+    const hashAsDelegate = computeCommitHash(PRICE_YES, SALT, DELEGATE, TIME, ANCILLARY, ROUND_ID, IDENTIFIER);
+    expect(hashAsStaker).not.toBe(hashAsDelegate);
+  });
+
+  test("delegate must use staker address in hash to match contract verification", () => {
+    // Simulate: delegate commits using staker (VOTER) address in hash
+    const salt = generateSalt();
+    const committedHash = computeCommitHash(PRICE_YES, salt, VOTER, TIME, ANCILLARY, ROUND_ID, IDENTIFIER);
+
+    // At reveal time, contract calls getVoterFromDelegate(delegate) → staker (VOTER)
+    // and verifies hash with staker address — must match
+    const verifyHash = computeCommitHash(PRICE_YES, salt, VOTER, TIME, ANCILLARY, ROUND_ID, IDENTIFIER);
+    expect(verifyHash).toBe(committedHash);
+  });
+
+  test("delegate committing with own address produces a hash that fails reveal verification", () => {
+    // This shows WHY the fix matters: if a delegate mistakenly uses their own address,
+    // the reveal (which uses staker address) will not match
+    const salt = generateSalt();
+    const incorrectHash = computeCommitHash(PRICE_YES, salt, DELEGATE, TIME, ANCILLARY, ROUND_ID, IDENTIFIER);
+    const correctVerify = computeCommitHash(PRICE_YES, salt, VOTER,    TIME, ANCILLARY, ROUND_ID, IDENTIFIER);
+    expect(correctVerify).not.toBe(incorrectHash);
+  });
+});
+
 // ─── CommitFile round-trip ────────────────────────────────────────────────────
 
 describe("writeCommitFile / readCommitFile", () => {
@@ -167,6 +200,7 @@ describe("writeCommitFile / readCommitFile", () => {
     return {
       roundId: 10252,
       voterAddress: VOTER,
+      signerAddress: VOTER,
       committedAt: "2026-02-21T00:00:00.000Z",
       txHash: "0xabc123def456",
       commits: [
@@ -242,6 +276,15 @@ describe("writeCommitFile / readCommitFile", () => {
     const loaded = readCommitFile(tmpFile);
     expect(loaded.txHash).toBeUndefined();
     expect(loaded.commits.length).toBe(original.commits.length);
+  });
+
+  test("delegate commit file stores distinct voterAddress (staker) and signerAddress (delegate)", () => {
+    const original = makeCommitFile({ voterAddress: VOTER, signerAddress: DELEGATE });
+    writeCommitFile(tmpFile, original);
+    const loaded = readCommitFile(tmpFile);
+    expect(loaded.voterAddress).toBe(VOTER);
+    expect(loaded.signerAddress).toBe(DELEGATE);
+    expect(loaded.voterAddress).not.toBe(loaded.signerAddress);
   });
 
   test("all CommitRecord fields are preserved exactly", () => {
