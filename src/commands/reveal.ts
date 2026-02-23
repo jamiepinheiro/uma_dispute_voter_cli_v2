@@ -1,4 +1,4 @@
-import { createWalletClient, http } from "viem";
+import { createWalletClient, http, encodeFunctionData } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { mainnet } from "viem/chains";
 import chalk from "chalk";
@@ -74,13 +74,15 @@ export async function revealCommand(options: RevealOptions): Promise<void> {
 
   process.stdout.write(`  Round ${chalk.bold(String(currentRoundId))} — ${chalk.green.bold("Reveal")} phase\n\n`);
 
-  // Build reveal structs
-  const reveals = commitFile.commits.map((c) => ({
+  // Build per-vote reveal args
+  const revealCalls = commitFile.commits.map((c) => ({
     identifier: c.identifier as `0x${string}`,
     time: BigInt(c.time),
     price: BigInt(c.price),
     ancillaryData: c.ancillaryData as `0x${string}`,
     salt: BigInt(c.salt),
+    description: c.description,
+    optionLabel: c.optionLabel,
   }));
 
   for (const c of commitFile.commits) {
@@ -90,32 +92,40 @@ export async function revealCommand(options: RevealOptions): Promise<void> {
     );
   }
 
-  const contractCall = {
-    address: VOTING_V2_ADDRESS,
-    abi: VOTING_V2_ABI,
-    functionName: "batchReveal",
-    args: [reveals],
-    account: signerAddress, // msg.sender is the signer (delegate or staker)
-  } as const;
+  // Encode each revealVote call for multicall batching
+  const encodedCalls = revealCalls.map((rc) =>
+    encodeFunctionData({
+      abi: VOTING_V2_ABI,
+      functionName: "revealVote",
+      args: [rc.identifier, rc.time, rc.price, rc.ancillaryData, rc.salt],
+    })
+  );
 
   if (debug) {
     process.stderr.write(chalk.dim(
-      `\n  === DEBUG: batchReveal params ===\n` +
+      `\n  === DEBUG: multicall(revealVote × ${revealCalls.length}) ===\n` +
       `  Contract:   ${VOTING_V2_ADDRESS}\n` +
       `  msg.sender: ${signerAddress}\n` +
       `  voterAddr:  ${resolvedVoter}${isDelegate ? " (staker, resolved from delegate)" : ""}\n` +
       `  roundId:    ${currentRoundId}\n` +
-      `  reveals:\n` +
-      reveals.map((r, i) =>
-        `    [${i}] identifier:    ${r.identifier}\n` +
-        `         time:          ${r.time}\n` +
-        `         price:         ${r.price}\n` +
-        `         ancillaryData: ${r.ancillaryData}\n` +
-        `         salt:          ${r.salt}\n`
+      revealCalls.map((r, i) =>
+        `  [${i}] identifier:    ${r.identifier}\n` +
+        `        time:          ${r.time}\n` +
+        `        price:         ${r.price}\n` +
+        `        ancillaryData: ${r.ancillaryData}\n` +
+        `        salt:          ${r.salt}\n`
       ).join("") +
       `  =================================\n\n`
     ));
   }
+
+  const contractCall = {
+    address: VOTING_V2_ADDRESS,
+    abi: VOTING_V2_ABI,
+    functionName: "multicall" as const,
+    args: [encodedCalls] as const,
+    account: signerAddress,
+  };
 
   if (dryRun) {
     process.stdout.write(chalk.dim("  Estimating gas (dry run — no transaction sent)…\n"));
@@ -128,45 +138,47 @@ export async function revealCommand(options: RevealOptions): Promise<void> {
       const costEth = Number(costWei) / 1e18;
       const gasPriceGwei = Number(gasPrice) / 1e9;
       process.stdout.write(
-        `\n  ${chalk.bold("Gas estimate (batchReveal)")}\n` +
+        `\n  ${chalk.bold(`Gas estimate (multicall × ${revealCalls.length} revealVote)`)}\n` +
         `  Gas units:  ${chalk.bold(gasEstimate.toLocaleString())}\n` +
         `  Gas price:  ${chalk.bold(gasPriceGwei.toFixed(2))} gwei\n` +
         `  Est. cost:  ${chalk.bold(costEth.toFixed(6))} ETH\n\n`
       );
     } catch (err) {
       process.stderr.write(chalk.red(`  Gas estimation failed: ${extractRevertReason(err)}\n`));
+      if (debug) process.stderr.write(chalk.dim(`\n  === DEBUG: full error ===\n${dumpError(err)}\n  =========================\n`));
       process.exit(1);
     }
     return;
   }
 
   // Simulate first to surface revert reasons before broadcasting
-  process.stdout.write(chalk.dim("  Simulating batchReveal…\n"));
-  let simulatedRequest: Awaited<ReturnType<typeof publicClient.simulateContract>>["request"];
+  process.stdout.write(chalk.dim("  Simulating multicall(revealVote…)…\n"));
   try {
-    const { request } = await publicClient.simulateContract(contractCall);
-    simulatedRequest = request;
+    await publicClient.simulateContract(contractCall);
   } catch (err) {
     const reason = extractRevertReason(err);
     process.stderr.write(chalk.red(`  Simulation failed (transaction would revert):\n  ${reason}\n`));
-    if (debug) {
-      process.stderr.write(chalk.dim(`\n  === DEBUG: full error ===\n${dumpError(err)}\n  =========================\n`));
-    }
+    if (debug) process.stderr.write(chalk.dim(`\n  === DEBUG: full error ===\n${dumpError(err)}\n  =========================\n`));
     process.exit(1);
   }
 
-  // Send batchReveal transaction
+  // Send single multicall transaction
   const walletClient = createWalletClient({
     account,
     chain: mainnet,
     transport: http(rpcUrl),
   });
 
-  process.stdout.write(chalk.dim("  Sending batchReveal transaction…\n"));
+  process.stdout.write(chalk.dim("  Sending multicall transaction…\n"));
 
   let txHash: `0x${string}`;
   try {
-    txHash = await walletClient.writeContract(simulatedRequest);
+    txHash = await walletClient.writeContract({
+      address: VOTING_V2_ADDRESS,
+      abi: VOTING_V2_ABI,
+      functionName: "multicall",
+      args: [encodedCalls],
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     process.stderr.write(chalk.red(`  Transaction failed: ${msg}\n`));
@@ -174,7 +186,7 @@ export async function revealCommand(options: RevealOptions): Promise<void> {
   }
 
   process.stdout.write(
-    `\n  ${chalk.green.bold("✓ Revealed")} ${reveals.length} vote${reveals.length === 1 ? "" : "s"}\n` +
+    `\n  ${chalk.green.bold("✓ Revealed")} ${revealCalls.length} vote${revealCalls.length === 1 ? "" : "s"}\n` +
     `  Tx: ${chalk.cyan(txHash)}\n\n`
   );
 }

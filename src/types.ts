@@ -61,7 +61,7 @@ export interface CommitFile {
   voterAddress: string;   // staker address (used in hash, may differ from signer if delegating)
   signerAddress: string;  // address derived from private key (delegate or same as voterAddress)
   committedAt: string;    // ISO timestamp
-  txHash?: string;
+  txHashes?: string[];    // one tx hash per commitVote call
   commits: CommitRecord[];
 }
 

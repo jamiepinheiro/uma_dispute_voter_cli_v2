@@ -202,7 +202,7 @@ describe("writeCommitFile / readCommitFile", () => {
       voterAddress: VOTER,
       signerAddress: VOTER,
       committedAt: "2026-02-21T00:00:00.000Z",
-      txHash: "0xabc123def456",
+      txHashes: ["0xabc123def456"],
       commits: [
         {
           description: "Will Kevin Warsh be nominated?",
@@ -270,11 +270,11 @@ describe("writeCommitFile / readCommitFile", () => {
     expect(() => JSON.parse(raw)).not.toThrow();
   });
 
-  test("commit file without txHash is still valid", () => {
-    const original = makeCommitFile({ txHash: undefined });
+  test("commit file without txHashes is still valid", () => {
+    const original = makeCommitFile({ txHashes: undefined });
     writeCommitFile(tmpFile, original);
     const loaded = readCommitFile(tmpFile);
-    expect(loaded.txHash).toBeUndefined();
+    expect(loaded.txHashes).toBeUndefined();
     expect(loaded.commits.length).toBe(original.commits.length);
   });
 

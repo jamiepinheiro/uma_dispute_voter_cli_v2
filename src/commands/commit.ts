@@ -1,4 +1,4 @@
-import { createWalletClient, createPublicClient, http } from "viem";
+import { createWalletClient, http, encodeFunctionData } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { mainnet } from "viem/chains";
 import { readFileSync } from "fs";
@@ -65,14 +65,17 @@ export async function commitCommand(options: CommitOptions): Promise<void> {
       functionName: "voterStakes",
       args: [voterAddress],
     });
+    // voterStakes returns a positional tuple: [stake, pendingUnstake, rewardsPaidPerToken,
+    //   outstandingRewards, unappliedSlash, nextIndexToProcess, unstakeTime, delegate]
+    const [stake, pendingUnstake, , , , , , delegate] = stakeInfo;
     process.stdout.write(chalk.dim(
-      `  Stake:   ${stakeInfo.stake} (${stakeInfo.stake === 0n ? chalk.red("NO STAKE") : "active"})\n` +
-      (stakeInfo.pendingUnstake > 0n ? chalk.yellow(`  Warning: ${stakeInfo.pendingUnstake} pending unstake\n`) : "") +
-      (isDelegate && stakeInfo.delegate.toLowerCase() !== signerAddress.toLowerCase()
-        ? chalk.red(`  Warning: staker's registered delegate (${stakeInfo.delegate}) ≠ signer (${signerAddress})\n`)
+      `  Stake:   ${stake} (${stake === 0n ? chalk.red("NO STAKE") : "active"})\n` +
+      (pendingUnstake > 0n ? chalk.yellow(`  Warning: ${pendingUnstake} pending unstake\n`) : "") +
+      (isDelegate && (delegate as string).toLowerCase() !== signerAddress.toLowerCase()
+        ? chalk.red(`  Warning: staker's registered delegate (${delegate}) ≠ signer (${signerAddress})\n`)
         : "")
     ));
-    if (stakeInfo.stake === 0n) {
+    if (stake === 0n) {
       process.stderr.write(chalk.red(
         `\n  Error: ${voterAddress} has no active stake in VotingV2.\n` +
         `  The staker must call stake() on the VotingV2 contract before votes can be committed.\n`
@@ -80,7 +83,6 @@ export async function commitCommand(options: CommitOptions): Promise<void> {
       process.exit(1);
     }
   } catch (err) {
-    // voterStakes ABI may not match exactly — skip check and let simulation catch it
     if (debug) process.stderr.write(chalk.dim(`  (voterStakes preflight failed: ${err instanceof Error ? err.message : err})\n`));
   }
 
@@ -95,15 +97,16 @@ export async function commitCommand(options: CommitOptions): Promise<void> {
   // Fetch active votes
   const data = await fetchVotingData(publicClient);
 
-  // Match each input to a vote and option
-  const commits: CommitRecord[] = [];
-  const contractCommits: {
+  // Match each input to a vote and option, compute salts and hashes
+  type VoteCall = {
     identifier: `0x${string}`;
     time: bigint;
     ancillaryData: `0x${string}`;
     hash: `0x${string}`;
-    encryptedVote: `0x${string}`;
-  }[] = [];
+    record: CommitRecord;
+  };
+
+  const voteCalls: VoteCall[] = [];
 
   for (const input of voteInputs) {
     const vote = data.votes.find((v) => v.index === input.index);
@@ -141,51 +144,56 @@ export async function commitCommand(options: CommitOptions): Promise<void> {
       `       Hash: ${chalk.dim(hash)}\n\n`
     );
 
-    commits.push({
-      description: vote.description,
-      identifier: vote.rawIdentifier,
-      time: time.toString(),
-      ancillaryData: vote.rawAncillaryData,
-      price: option.numericValue.toString(),
-      salt: salt.toString(),
-      optionLabel: option.label,
-    });
-
-    contractCommits.push({
+    voteCalls.push({
       identifier: vote.rawIdentifier,
       time,
       ancillaryData: vote.rawAncillaryData,
       hash,
-      encryptedVote: "0x",
+      record: {
+        description: vote.description,
+        identifier: vote.rawIdentifier,
+        time: time.toString(),
+        ancillaryData: vote.rawAncillaryData,
+        price: option.numericValue.toString(),
+        salt: salt.toString(),
+        optionLabel: option.label,
+      },
     });
+  }
+
+  // Encode each commitVote call for multicall batching
+  const encodedCalls = voteCalls.map((vc) =>
+    encodeFunctionData({
+      abi: VOTING_V2_ABI,
+      functionName: "commitVote",
+      args: [vc.identifier, vc.time, vc.ancillaryData, vc.hash],
+    })
+  );
+
+  if (debug) {
+    process.stderr.write(chalk.dim(
+      `\n  === DEBUG: multicall(commitVote × ${voteCalls.length}) ===\n` +
+      `  Contract:    ${VOTING_V2_ADDRESS}\n` +
+      `  msg.sender:  ${signerAddress}\n` +
+      `  voterAddr:   ${voterAddress}${isDelegate ? " (staker, resolved from delegate)" : ""}\n` +
+      `  roundId:     ${roundId}\n` +
+      voteCalls.map((c, i) =>
+        `  [${i}] identifier:    ${c.identifier}\n` +
+        `        time:          ${c.time}\n` +
+        `        ancillaryData: ${c.ancillaryData}\n` +
+        `        hash:          ${c.hash}\n`
+      ).join("") +
+      `  ================================\n\n`
+    ));
   }
 
   const contractCall = {
     address: VOTING_V2_ADDRESS,
     abi: VOTING_V2_ABI,
-    functionName: "batchCommit",
-    args: [contractCommits],
-    account: signerAddress, // msg.sender is the signer (delegate or staker)
-  } as const;
-
-  if (debug) {
-    process.stderr.write(chalk.dim(
-      `\n  === DEBUG: batchCommit params ===\n` +
-      `  Contract:    ${VOTING_V2_ADDRESS}\n` +
-      `  msg.sender:  ${signerAddress}\n` +
-      `  voterAddr:   ${voterAddress}${isDelegate ? " (staker, resolved from delegate)" : ""}\n` +
-      `  roundId:     ${roundId}\n` +
-      `  commits:\n` +
-      contractCommits.map((c, i) =>
-        `    [${i}] identifier:    ${c.identifier}\n` +
-        `         time:          ${c.time}\n` +
-        `         ancillaryData: ${c.ancillaryData}\n` +
-        `         hash:          ${c.hash}\n` +
-        `         encryptedVote: ${c.encryptedVote}\n`
-      ).join("") +
-      `  ================================\n\n`
-    ));
-  }
+    functionName: "multicall" as const,
+    args: [encodedCalls] as const,
+    account: signerAddress,
+  };
 
   if (dryRun) {
     process.stdout.write(chalk.dim("  Estimating gas (dry run — no transaction sent)…\n"));
@@ -198,45 +206,47 @@ export async function commitCommand(options: CommitOptions): Promise<void> {
       const costEth = Number(costWei) / 1e18;
       const gasPriceGwei = Number(gasPrice) / 1e9;
       process.stdout.write(
-        `\n  ${chalk.bold("Gas estimate (batchCommit)")}\n` +
+        `\n  ${chalk.bold(`Gas estimate (multicall × ${voteCalls.length} commitVote)`)}\n` +
         `  Gas units:  ${chalk.bold(gasEstimate.toLocaleString())}\n` +
         `  Gas price:  ${chalk.bold(gasPriceGwei.toFixed(2))} gwei\n` +
         `  Est. cost:  ${chalk.bold(costEth.toFixed(6))} ETH\n\n`
       );
     } catch (err) {
       process.stderr.write(chalk.red(`  Gas estimation failed: ${extractRevertReason(err)}\n`));
+      if (debug) process.stderr.write(chalk.dim(`\n  === DEBUG: full error ===\n${dumpError(err)}\n  =========================\n`));
       process.exit(1);
     }
     return;
   }
 
   // Simulate first to surface revert reasons before broadcasting
-  process.stdout.write(chalk.dim("  Simulating batchCommit…\n"));
-  let simulatedRequest: Awaited<ReturnType<typeof publicClient.simulateContract>>["request"];
+  process.stdout.write(chalk.dim("  Simulating multicall(commitVote…)…\n"));
   try {
-    const { request } = await publicClient.simulateContract(contractCall);
-    simulatedRequest = request;
+    await publicClient.simulateContract(contractCall);
   } catch (err) {
     const reason = extractRevertReason(err);
     process.stderr.write(chalk.red(`  Simulation failed (transaction would revert):\n  ${reason}\n`));
-    if (debug) {
-      process.stderr.write(chalk.dim(`\n  === DEBUG: full error ===\n${dumpError(err)}\n  =========================\n`));
-    }
+    if (debug) process.stderr.write(chalk.dim(`\n  === DEBUG: full error ===\n${dumpError(err)}\n  =========================\n`));
     process.exit(1);
   }
 
-  // Send batchCommit transaction
+  // Send single multicall transaction
   const walletClient = createWalletClient({
     account,
     chain: mainnet,
     transport: http(rpcUrl),
   });
 
-  process.stdout.write(chalk.dim("  Sending batchCommit transaction…\n"));
+  process.stdout.write(chalk.dim("  Sending multicall transaction…\n"));
 
   let txHash: `0x${string}`;
   try {
-    txHash = await walletClient.writeContract(simulatedRequest);
+    txHash = await walletClient.writeContract({
+      address: VOTING_V2_ADDRESS,
+      abi: VOTING_V2_ABI,
+      functionName: "multicall",
+      args: [encodedCalls],
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     process.stderr.write(chalk.red(`  Transaction failed: ${msg}\n`));
@@ -249,13 +259,13 @@ export async function commitCommand(options: CommitOptions): Promise<void> {
     voterAddress,
     signerAddress,
     committedAt: new Date().toISOString(),
-    txHash,
-    commits,
+    txHashes: [txHash],
+    commits: voteCalls.map((vc) => vc.record),
   };
   writeCommitFile(outFile, commitFile);
 
   process.stdout.write(
-    `\n  ${chalk.green.bold("✓ Committed")} ${commits.length} vote${commits.length === 1 ? "" : "s"}\n` +
+    `\n  ${chalk.green.bold("✓ Committed")} ${voteCalls.length} vote${voteCalls.length === 1 ? "" : "s"}\n` +
     `  Tx:   ${chalk.cyan(txHash)}\n` +
     `  File: ${chalk.cyan(outFile)}\n\n` +
     chalk.dim("  Keep this file safe — you'll need it to reveal your votes.\n\n")
