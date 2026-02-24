@@ -59,20 +59,27 @@ export async function revealCommand(options: RevealOptions): Promise<void> {
     process.stdout.write(chalk.dim(`  Revealing as delegate for: ${resolvedVoter}\n\n`));
   }
 
-  if (phaseRaw !== 1) {
-    process.stderr.write(chalk.red(`  Error: Current phase is Commit, not Reveal. Cannot reveal votes yet.\n`));
-    process.exit(1);
-  }
-
   const currentRoundId = Number(roundIdRaw);
-  if (currentRoundId !== commitFile.roundId) {
-    process.stderr.write(
-      chalk.red(`  Error: Commit file is for round ${commitFile.roundId} but current round is ${currentRoundId}.\n`)
-    );
-    process.exit(1);
+
+  if (dryRun) {
+    if (phaseRaw !== 1) {
+      process.stdout.write(chalk.yellow("  Warning: currently in Commit phase — gas estimate may not reflect real conditions.\n\n"));
+    }
+  } else {
+    if (phaseRaw !== 1) {
+      process.stderr.write(chalk.red(`  Error: Current phase is Commit, not Reveal. Cannot reveal votes yet.\n`));
+      process.exit(1);
+    }
+    if (currentRoundId !== commitFile.roundId) {
+      process.stderr.write(
+        chalk.red(`  Error: Commit file is for round ${commitFile.roundId} but current round is ${currentRoundId}.\n`)
+      );
+      process.exit(1);
+    }
   }
 
-  process.stdout.write(`  Round ${chalk.bold(String(currentRoundId))} — ${chalk.green.bold("Reveal")} phase\n\n`);
+  const phaseName = phaseRaw === 1 ? chalk.green.bold("Reveal") : chalk.yellow.bold("Commit");
+  process.stdout.write(`  Round ${chalk.bold(String(currentRoundId))} — ${phaseName} phase\n\n`);
 
   // Build per-vote reveal args
   const revealCalls = commitFile.commits.map((c) => ({
